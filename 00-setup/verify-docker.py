@@ -69,8 +69,14 @@ def check_port(port: int) -> bool:
 
 def main() -> int:
     docker_ok, docker_ver = check_docker()
-    compose_ok, compose_ver = check_compose_v2()
-    ram_ok, ram_gb = check_ram_headroom()
+    # Compose/RAM checks shell out to `docker`; skip them if the binary is
+    # absent so the report still gets written instead of crashing.
+    if docker_ok:
+        compose_ok, compose_ver = check_compose_v2()
+        ram_ok, ram_gb = check_ram_headroom()
+    else:
+        compose_ok, compose_ver = False, "skipped: docker unavailable"
+        ram_ok, ram_gb = False, 0.0
     port_status = {p: check_port(p) for p in REQUIRED_PORTS}
     bound_ports = [p for p, free in port_status.items() if not free]
 

@@ -1,0 +1,25 @@
+{
+  "docker": {
+    "ok": false,
+    "version": "docker binary not found in PATH"
+  },
+  "compose_v2": {
+    "ok": false,
+    "version": "skipped: docker unavailable"
+  },
+  "ram_gb_available": 0.0,
+  "ram_ok": false,
+  "required_ports": [
+    8000,
+    9090,
+    9093,
+    3000,
+    3100,
+    16686,
+    4317,
+    4318,
+    8888
+  ],
+  "bound_ports": [],
+  "all_ports_free": true
+}
