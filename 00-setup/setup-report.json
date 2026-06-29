@@ -1,14 +1,14 @@
 {
   "docker": {
-    "ok": false,
-    "version": "docker binary not found in PATH"
+    "ok": true,
+    "version": "29.6.1"
   },
   "compose_v2": {
-    "ok": false,
-    "version": "skipped: docker unavailable"
+    "ok": true,
+    "version": "5.2.0"
   },
-  "ram_gb_available": 0.0,
-  "ram_ok": false,
+  "ram_gb_available": 7.61,
+  "ram_ok": true,
   "required_ports": [
     8000,
     9090,

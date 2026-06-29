@@ -9,8 +9,8 @@ venv/
 # Lab artifacts (generated)
 benchmarks/*.csv
 benchmarks/*.json
-submission/screenshots/*.png
-submission/screenshots/*.jpg
+# NOTE: submission screenshots MUST be committed (rubric: "commits in
+# submission/screenshots/"), so they are intentionally NOT ignored here.
 
 # Local OS junk
 .DS_Store

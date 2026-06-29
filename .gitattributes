@@ -1,0 +1,6 @@
+# Shell scripts must stay LF so they run under bash/WSL/Linux even when the repo
+# is checked out on Windows (CRLF breaks the shebang: `$'\r': command not found`).
+*.sh text eol=lf
+# YAML/config consumed by Linux containers — keep LF.
+*.yml text eol=lf
+*.yaml text eol=lf

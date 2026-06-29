@@ -2,6 +2,7 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: prometheus          # dashboards reference datasource by this fixed uid
     type: prometheus
     access: proxy
     url: http://prometheus:9090
@@ -14,6 +15,7 @@ datasources:
           datasourceUid: jaeger
 
   - name: Loki
+    uid: loki                # fixed uid so dashboard log panels resolve it
     type: loki
     access: proxy
     url: http://loki:3100

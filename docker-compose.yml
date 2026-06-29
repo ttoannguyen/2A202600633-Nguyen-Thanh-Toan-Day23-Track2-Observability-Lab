@@ -8,6 +8,7 @@ services:
       context: ./01-instrument-fastapi/app
       dockerfile: Dockerfile
     container_name: day23-app
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
     environment:
@@ -31,6 +32,7 @@ services:
     # histograms (GA v3.8) bump to prom/prometheus:v3.12.0 (rules below are 3.x-compatible).
     image: prom/prometheus:v2.55.0
     container_name: day23-prometheus
+    restart: unless-stopped
     ports:
       - "127.0.0.1:9090:9090"
     volumes:
@@ -53,17 +55,24 @@ services:
   alertmanager:
     image: prom/alertmanager:v0.27.0
     container_name: day23-alertmanager
+    restart: unless-stopped
     ports:
       - "127.0.0.1:9093:9093"
     volumes:
       - ./02-prometheus-grafana/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     environment:
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/REPLACE/ME}
+    # Alertmanager does not expand env vars inside its config; write the webhook
+    # to a file at boot and reference it via api_url_file in alertmanager.yml.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - 'printf "%s" "$$SLACK_WEBHOOK_URL" > /tmp/slack_url && exec /bin/alertmanager --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager'
     networks: [obs]
 
   grafana:
     image: grafana/grafana:11.3.0
     container_name: day23-grafana
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3000:3000"
     environment:
@@ -85,6 +94,7 @@ services:
   loki:
     image: grafana/loki:3.3.0
     container_name: day23-loki
+    restart: unless-stopped
     ports:
       - "127.0.0.1:3100:3100"
     volumes:
@@ -95,6 +105,7 @@ services:
   jaeger:
     image: jaegertracing/all-in-one:1.62.0
     container_name: day23-jaeger
+    restart: unless-stopped
     ports:
       - "127.0.0.1:16686:16686"  # UI
       - "127.0.0.1:14250:14250"  # gRPC OTLP-compatible
@@ -105,6 +116,7 @@ services:
   otel-collector:
     image: otel/opentelemetry-collector-contrib:0.114.0
     container_name: day23-otel-collector
+    restart: unless-stopped
     ports:
       - "127.0.0.1:4317:4317"  # OTLP gRPC
       - "127.0.0.1:4318:4318"  # OTLP HTTP
@@ -114,6 +126,18 @@ services:
     command: ["--config=/etc/otelcol-contrib/config.yaml"]
     depends_on:
       - jaeger
+    networks: [obs]
+
+  # Day 19 prior-day source (§05 integration). Stub Qdrant-shaped exporter on the
+  # obs network so the cross-day dashboard's Day-19 panel renders real data.
+  day19-stub:
+    image: python:3.12-slim
+    container_name: day23-day19-stub
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ./05-integration:/app:ro
+    command: ["sh", "-c", "pip install --quiet --root-user-action=ignore prometheus-client requests && python monitor-day19-vector-store.py"]
     networks: [obs]
 
 volumes:

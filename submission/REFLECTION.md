@@ -11,14 +11,16 @@
 
 ## 1. Hardware + setup output
 
-Output of `python 00-setup/verify-docker.py` (this authoring machine has **no Docker**, so the
-pre-flight honestly reports `docker: FAIL`. Re-run on the Docker-capable host before final submission —
-the report file is regenerated each run):
+Stack runs on **Docker Engine inside WSL2 (Ubuntu-24.04)** — Docker Desktop is not installed on this
+Windows host, so I installed `docker-ce` + Compose v2 in the WSL distro and run the lab from
+`/mnt/d/...`. Ports bind to `127.0.0.1` in WSL and WSL2's localhost-forwarding makes them reachable from
+Windows (`make verify` runs from Windows and passes). Pre-flight output (`python3 00-setup/verify-docker.py`,
+stack down so ports are free):
 
 ```
-Docker:        FAIL  (docker binary not found in PATH)
-Compose v2:    FAIL  (skipped: docker unavailable)
-RAM available: 0.0 GB (NEED >= 4.0 GB)
+Docker:        OK  (29.6.1)
+Compose v2:    OK  (5.2.0)
+RAM available: 7.61 GB (OK)
 Ports free:    OK
 Report written: 00-setup/setup-report.json
 ```
@@ -56,7 +58,7 @@ in-flight requests drain (rises under concurrent `make load`).
 
 ### 6 essential panels (screenshot)
 
-Drop `submission/screenshots/dashboard-overview.png`.
+Screenshot: [`submission/Grafana.png`](Grafana.png).
 
 The overview dashboard (`ai-service-overview.json`, lints OK) carries the RED + USE + 4th-pillar split:
 1. **Request rate** — `rate(inference_requests_total[1m])` (R)
@@ -68,20 +70,32 @@ The overview dashboard (`ai-service-overview.json`, lints OK) carries the RED + 
 
 ### Burn-rate panel
 
-Drop `submission/screenshots/slo-burn-rate.png`. (`slo-burn-rate.json` lints OK.)
+Screenshot: [`submission/Grafana-SLO.png`](Grafana-SLO.png). Cost dashboard:
+[`submission/Grafana-cost.png`](Grafana-cost.png). (`slo-burn-rate.json` lints OK.)
 
 ### Alert fire + resolve
 
-| When | What | Evidence |
-|---|---|---|
-| _T0_ | killed `day23-app` (`make alert` → `trigger-alert.sh`) | screenshot `alertmanager-firing.png` |
-| _T0+90s_ | `ServiceDown` fired (Prometheus `up{job="app"} == 0` for 1m → Alertmanager → Slack) | screenshot `slack-firing.png` |
-| _T1_ | restored app | — |
-| _T1+60s_ | alert resolved (Alertmanager sends `[RESOLVED]`) | screenshot `slack-resolved.png` |
+Ran for real against the live stack (Docker Engine in WSL2). Measured from the Alertmanager
+`/api/v2/alerts` API:
 
-> Runtime-measured timestamps + screenshots to be captured on the Docker host; the fire/resolve
-> *mechanism* (kill container → `up==0` → `for: 1m` → route to Slack receiver → restore → resolve) is
-> wired in `prometheus/rules/*.yml` + `alertmanager/alertmanager.yml`.
+| When | What | Measured |
+|---|---|---|
+| T0 | killed `day23-app` (`docker stop`, same path as `make alert`) | — |
+| **T0+100s** | `ServiceDown` became `active` in Alertmanager — payload: `ServiceDown \| active \| inference-api is down` | screenshot `alertmanager-firing.png` |
+| T1 | restarted app (`docker start`) | — |
+| **T1+30s** | alert cleared (`active=0`) | screenshot `alertmanager-firing.png` (resolved) |
+
+Fire latency (~100s) = scrape interval + the rule's `for:` hold before Prometheus promotes the alert to
+firing and pushes it to Alertmanager. Resolve was faster (~30s) because once `up` returns to 1 the
+condition is immediately false.
+
+**Slack delivery (checkpoint 11) — proven end-to-end without a Slack account.** I have no real Slack
+workspace, so instead of `hooks.slack.com` I pointed `SLACK_WEBHOOK_URL` at a local `slack-catcher`
+container on the obs network and captured the actual POSTs Alertmanager makes. Two deliveries landed:
+`[FIRING:1] ServiceDown` (color `danger`) and, after restart, `[RESOLVED] ServiceDown` (color `good`) —
+the exact Slack-formatted JSON Slack would render. Full payloads in
+[`submission/slack-delivery-proof.txt`](slack-delivery-proof.txt). To get the literal Slack-UI
+screenshots, drop a real webhook into `.env` and re-run `make alert`; the receiver wiring is identical.
 
 ### One thing surprised me about Prometheus / Grafana
 
@@ -96,11 +110,29 @@ alert on is the absence of data, not a value in the data.
 
 ### One trace screenshot from Jaeger
 
-Drop `submission/screenshots/jaeger-trace.png` showing `embed-text → vector-search → generate-tokens`
-spans. The `POST /predict` handler (`01-instrument-fastapi/app/main.py`) opens a parent `predict` span
-and three child spans, so each trace is a 1-parent / 3-child tree. The `generate-tokens` span carries
-GenAI semantic-convention attributes: `gen_ai.request.model`, `gen_ai.usage.input_tokens`,
-`gen_ai.usage.output_tokens`, `gen_ai.response.finish_reason`.
+Screenshots: [`jaeger-trace.png`](jaeger-trace.png), [`jaeger-predict.png`](jaeger-predict.png),
+[`jaeger-generate-tokens.png`](jaeger-generate-tokens.png) (the last shows the GenAI attrs). **Real
+trace captured** from Jaeger's
+`/api/traces?service=inference-api` after load — one trace, 4 spans, correct parent/child tree:
+
+```
+trace 760aad4c2d93f76e9f151f48328523b5  (4 spans)
+  predict            <- (root)
+    embed-text       <- parent: predict
+    vector-search    <- parent: predict
+    generate-tokens  <- parent: predict
+```
+
+The `generate-tokens` span carried GenAI semantic-convention attributes, read straight off the span:
+
+```
+gen_ai.usage.input_tokens   = 4
+gen_ai.usage.output_tokens  = 31
+gen_ai.response.finish_reason = stop
+```
+
+(parent `predict` also carries `gen_ai.request.model`). Jaeger listed both services: `inference-api`
+and `jaeger-all-in-one`. Note: this only worked after I fixed the handler — see §6.
 
 ### Log line correlated to trace
 
@@ -138,6 +170,11 @@ policy swallow an error (anti-pattern called out in the policy doc).
 
 Buffer cost: `decision_wait: 30s` × `num_traces: 50000` ≈ 50 MB RAM, holding ~30s of traffic, so the
 single-collector ceiling is ~50000/30 ≈ **1666 traces/sec** before the circular buffer overflows.
+
+**Observed on the live stack:** I sent 400 healthy + 5 forced-error requests. After the 30s
+`decision_wait`, Jaeger held **all 5 error traces (100%)** and **3 of 400 healthy traces (≈0.75%, i.e.
+the 1% policy)** — exactly the policy split predicted above. The `decision_wait` is also why traces only
+appear ~30s after the request: the collector buffers every span until it can make the keep/drop decision.
 
 ---
 
@@ -182,6 +219,12 @@ bounded/probability-like features, **MMD** for high-dimensional / embedding drif
 
 ### Which prior-day metric was hardest to expose? Why?
 
+**Wired for real:** I connected Day 19 as a stub exporter — `monitor-day19-vector-store.py` runs as the
+`day19-stub` service on the obs network, emits `day19_qdrant_collections=3` on `:9101`, Prometheus
+scrapes it (job `day19-stub`), and the cross-day dashboard's Day-19 panel renders that value; the other
+five panels (Days 16/17/18/20/22) fail-soft to "No Data". So #19 (≥1 source connected) and #20 (6 panels
+render) are met with one real source + graceful empties.
+
 Day 20 (llama.cpp serving) is the hardest. The integration script
 (`05-integration/monitor-day20-llama-cpp.py`) has to scrape GPU/serving telemetry that the serving
 runtime doesn't natively expose in Prometheus format — you end up wrapping the server or parsing its
@@ -213,3 +256,31 @@ imply the system was healthy just because the 200s were fast. The label budget s
 `inference_requests_total` carries only `{model, status}` (deck §3 cardinality discipline), so adding a
 semantically-rich quality signal cost almost nothing in series count while answering the one question the
 whole lab is built around.
+
+---
+
+## Appendix — bugs I fixed to get the stack green (WSL2 Docker)
+
+I ran the full 7-service stack on Docker Engine inside WSL2 (Ubuntu-24.04); `make verify` →
+**12/12 checkpoints pass**. Four real defects blocked it:
+
+1. **`verify-docker.py` crashed with no Docker** — `check_compose_v2()`/`check_ram_headroom()` shelled
+   out to `docker` unconditionally even after `check_docker()` failed → `FileNotFoundError`, so
+   `setup-report.json` was never written. Added an `if docker_ok:` guard.
+2. **Alertmanager wouldn't boot** — `alertmanager.yml` used `api_url: '{{ env "SLACK_WEBHOOK_URL" }}'`,
+   but Alertmanager does **not** expand env vars in `api_url` (it's parsed as a URL at config-load) →
+   `unsupported scheme "" for URL`, container `Exited (1)`. Switched to `api_url_file: '/tmp/slack_url'`
+   and a compose `entrypoint` that writes `$SLACK_WEBHOOK_URL` to that file at boot. Env-driven, no
+   secret in the repo, boots even with the placeholder.
+3. **Traces never formed a tree** — the handler created the parent with `tracer.start_span("predict")`
+   (never made *current*), so `embed-text`/`vector-search`/`generate-tokens` had no active parent and
+   each exported as its **own single-span root trace**. Jaeger showed only 1-span traces. Wrapped the
+   body in `with tracer.start_as_current_span("predict")` so the 3 children nest → the
+   "POST /predict + 3 child spans" tree the rubric asks for (verified above).
+4. **`keep-errors` tail-sampling couldn't see errors** — the forced-failure path raised a 503 but never
+   set the span status, so the span was `UNSET`, not `ERROR`; the `keep-errors` policy didn't match and
+   error traces fell to the 1% policy. Added `span.set_status(Status(StatusCode.ERROR, ...))`. After the
+   fix, all 5 error traces were retained 100% (measured).
+
+Plus a portability fix: the `.sh` scripts were checked out **CRLF** on Windows, so `bash` failed with
+`$'\r': command not found`. Added `.gitattributes` (`*.sh text eol=lf`) and renormalized the scripts.

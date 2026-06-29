@@ -27,8 +27,14 @@ scrape_configs:
     static_configs:
       - targets: ['otel-collector:8888']
 
-  # Day 19 vector-store integration (optional, see §05)
-  # Uncomment + set DAY19_QDRANT_URL in .env
+  # Day 19 vector-store integration (§05). Stub exporter runs as the day19-stub
+  # service on the obs network and emits day19_qdrant_* metrics on :9101.
+  - job_name: 'day19-stub'
+    static_configs:
+      - targets: ['day19-stub:9101']
+    metrics_path: /metrics
+
+  # Real Qdrant instead of the stub: set DAY19_QDRANT_URL and point here.
   # - job_name: 'day19-qdrant'
   #   static_configs:
   #     - targets: ['host.docker.internal:6333']

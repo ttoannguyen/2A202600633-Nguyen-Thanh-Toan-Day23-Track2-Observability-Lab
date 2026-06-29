@@ -1,0 +1,31 @@
+Slack delivery proof — Day 23 Track 2, checkpoint #11 (fire + resolve)
+=====================================================================
+
+No real Slack workspace webhook was available, so a local `slack-catcher`
+container was attached to the obs network and `SLACK_WEBHOOK_URL` pointed at it.
+This proves the full Alertmanager -> webhook delivery path end-to-end (fire AND
+resolve), in the exact Slack-formatted JSON Slack itself would receive. To produce
+the literal Slack-UI screenshots, swap a real https://hooks.slack.com/services/...
+webhook into .env and re-run `make alert` — the receiver wiring is unchanged.
+
+Sequence: stop day23-app -> ServiceDown fired (~105s) -> start day23-app -> resolved (~55s).
+Alertmanager delivered 2 POSTs to the webhook:
+
+--------------------------- DELIVERY 1: FIRING ---------------------------
+[2026-06-29T15:24:17Z] POST /hook
+{"channel":"#oncall","username":"Alertmanager","attachments":[{
+  "title":"🚨 CRITICAL: ServiceDown",
+  "text":"\n*inference-api is down*\nPrometheus has been unable to scrape inference-api for 1 minute.\n*Runbook:* \n\n",
+  "fallback":"[FIRING:1] ServiceDown inference-api (aicb-day23-lab lab app:8000 inference-api critical)",
+  "color":"danger","mrkdwn_in":["fallback","pretext","text"]}]}
+
+-------------------------- DELIVERY 2: RESOLVED --------------------------
+[2026-06-29T15:25:19Z] POST /hook
+{"channel":"#oncall","username":"Alertmanager","attachments":[{
+  "title":"🚨 CRITICAL: ServiceDown",
+  "text":"\n*inference-api is down*\nPrometheus has been unable to scrape inference-api for 1 minute.\n*Runbook:* \n\n",
+  "fallback":"[RESOLVED] ServiceDown inference-api (aicb-day23-lab lab app:8000 inference-api critical)",
+  "color":"good","mrkdwn_in":["fallback","pretext","text"]}]}
+
+Note the color flip danger -> good and the [FIRING:1] -> [RESOLVED] prefix:
+that is exactly how the on-call channel distinguishes a new page from its clear.
